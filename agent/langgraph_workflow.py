@@ -50,14 +50,16 @@ def node_verify(gs: GraphState) -> GraphState:
 def should_retry(gs: GraphState) -> str:
     s = gs["state"]
     schema_valid = bool(s.verification.get("schema_valid", False))
+    citations_valid = bool(s.verification.get("citations_valid", False))
 
-    if schema_valid:
+    if schema_valid and citations_valid:
         return "end"
 
     if s.llm_attempts >= s.max_llm_attempts:
         return "end"
 
     return "retry"
+
 
 
 def build_graph():
