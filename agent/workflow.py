@@ -2,6 +2,7 @@ from agent.state import AgentState
 from agent.planner import plan_task
 from agent.executor import execute_plan
 from agent.verifier import verify_output
+from agent.summarizer import generate_structured_summary
 
 
 def run_agent(task: str) -> AgentState:
@@ -10,6 +11,11 @@ def run_agent(task: str) -> AgentState:
 
     state = plan_task(state)
     state = execute_plan(state)
+    try:
+        state.output = generate_structured_summary(state.task, state.retrieved_files)
+    except Exception as e:
+        state.output = {"error": str(e)}
+
     state = verify_output(state)
 
     print("AGENT: finished")

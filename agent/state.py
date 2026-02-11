@@ -14,3 +14,6 @@ class AgentState:
     analysis: str = ""
     output: Dict[str, Any] = field(default_factory=dict)
     verification: Dict[str, bool] = field(default_factory=dict)
+    llm_attempts: int = 0
+    max_llm_attempts: int = 2
+
