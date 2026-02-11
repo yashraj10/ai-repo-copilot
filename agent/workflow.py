@@ -6,7 +6,7 @@ from agent.verifier import verify_output
 
 def run_agent(task: str) -> AgentState:
     print("AGENT: started")
-    state = AgentState(task=task)
+    state = AgentState(task=task, repo_path="sample_repo")
 
     state = plan_task(state)
     state = execute_plan(state)
