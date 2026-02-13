@@ -17,7 +17,33 @@ class ReadFileResult:
 
 
 TEXT_EXTENSIONS = {
-    ".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"
+    # Python
+    ".py", ".pyi", ".pyx",
+    # JavaScript / TypeScript
+    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    # Web
+    ".html", ".htm", ".css", ".scss", ".sass", ".less", ".svg",
+    # Systems
+    ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".cs",
+    # JVM
+    ".java", ".kt", ".kts", ".scala", ".groovy",
+    # Other languages
+    ".go", ".rs", ".rb", ".php", ".swift", ".m", ".mm",
+    ".r", ".R", ".jl", ".lua", ".pl", ".pm", ".ex", ".exs",
+    ".hs", ".erl", ".clj", ".dart", ".v", ".zig",
+    # Shell / scripting
+    ".sh", ".bash", ".zsh", ".fish", ".bat", ".cmd", ".ps1",
+    # Config / data
+    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".xml", ".env", ".properties", ".gradle",
+    # Docs / text
+    ".md", ".txt", ".rst", ".csv", ".tsv", ".log",
+    # SQL
+    ".sql",
+    # Docker / CI
+    ".dockerfile",
+    # Misc
+    ".graphql", ".proto", ".tf", ".hcl",
 }
 
 
