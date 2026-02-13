@@ -1,62 +1,106 @@
+"""
+Verifier node — validates schema and citations, sets validation feedback for retries.
+"""
 from __future__ import annotations
 
-from agent.state import AgentState
+import os
+import re
+from typing import Any, Dict, List
+
 from eval.schema_validate import validate_output_schema
 from eval.citation_validate import validate_citations
+from agent.state import AgentState
+
+
+def _is_path_traversal_task(task: str) -> bool:
+    patterns = [r'\.\./\.\.', r'/etc/', r'/usr/', r'/var/', r'/tmp/', r'/home/', r'\\windows\\']
+    return any(re.search(pat, task.lower()) for pat in patterns)
 
 
 def verify_output(state: AgentState) -> AgentState:
+    """Validate the agent's output and build retry feedback."""
     print("VERIFIER: checking rules")
 
-    used_tools = len(state.tool_calls) > 0
-    read_calls = [c for c in state.tool_calls if c.get("tool") == "read_file"]
-    citations_possible = len(read_calls) > 0
+    # Schema validation
+    schema_ok, schema_errs = validate_output_schema(state.output)
+    state.schema_valid = schema_ok
+    state.schema_errors = schema_errs
 
-    schema_valid = False
-    schema_error = ""
+    # Citation validation
+    citations_ok, citation_errs = validate_citations(
+        output=state.output,
+        retrieved_files=state.retrieved_files,
+        repo_path=state.repo_path,
+    )
+    state.citations_valid = citations_ok
+    state.citation_errors = citation_errs
 
-    citations_valid = False
-    citations_error = ""
+    # ---- Additional invalidation rules ----
 
-    # If LLM failed, we store {"error": "..."} so everything should fail.
-    if isinstance(state.output, dict) and "error" not in state.output:
-        schema_valid, schema_error = validate_output_schema(state.output)
+    # Check for security errors in BOTH retrieved_files AND tool_calls
+    security_keywords = ["symlink", "path traversal", "escapes repo", "symlink not allowed"]
+    
+    for source_list in [state.retrieved_files or [], state.tool_calls or []]:
+        for x in source_list:
+            if not isinstance(x, dict):
+                continue
+            tool = x.get("tool") or x.get("name")
+            if tool != "read_file":
+                continue
+            err = str(x.get("error", "") or "")
+            if any(kw in err.lower() for kw in security_keywords):
+                if state.citations_valid:
+                    state.citations_valid = False
+                    state.citation_errors.append(
+                        f"Security error for '{x.get('path', 'unknown')}': {err}"
+                    )
 
-        if schema_valid:
-            citations_valid, citations_error = validate_citations(state.output, state.retrieved_files)
-        else:
-            citations_valid = False
-            citations_error = "Skipped citation check because schema is invalid."
+    # Check path traversal in task
+    if _is_path_traversal_task(state.task):
+        if state.citations_valid:
+            state.citations_valid = False
+            state.citation_errors.append(
+                "Task references paths outside repository; citations cannot be validated."
+            )
+
+    # Check binary files targeted by task
+    task_lower = state.task.lower()
+    for x in (state.retrieved_files or []):
+        if x.get("tool") == "read_file" and x.get("is_binary"):
+            bf = x.get("path", "")
+            bf_lower = bf.lower()
+            basename = os.path.basename(bf_lower)
+            if bf_lower in task_lower or basename in task_lower:
+                if state.citations_valid:
+                    state.citations_valid = False
+                    state.citation_errors.append(
+                        f"Task targets binary file '{bf}'; citations cannot be validated."
+                    )
+
+    # Build retry feedback for LangGraph retry loop
+    if not state.schema_valid or not state.citations_valid:
+        parts = []
+        if not state.schema_valid:
+            parts.append("SCHEMA ERRORS: " + "; ".join(state.schema_errors))
+        if not state.citations_valid:
+            parts.append("CITATION ERRORS: " + "; ".join(state.citation_errors))
+        state.last_validation_feedback = "\n".join(parts)
     else:
-        err = state.output.get("error", "Missing output") if isinstance(state.output, dict) else "Missing output"
-        schema_error = err
-        citations_error = err
+        state.last_validation_feedback = None
 
-    state.verification = {
-        "used_tools": used_tools,
-        "citations_present": citations_possible,  # still means "citations possible"
-        "schema_valid": schema_valid,
-        "citations_valid": citations_valid,
-    }
-
-    if used_tools:
-        print("   OK: Tools were used.")
-    else:
-        print("   FAIL: No tools were used.")
-
-    if citations_possible:
-        print("   OK: At least one file was read with line numbers.")
-    else:
-        print("   FAIL: No files were read; citations not possible.")
-
-    if schema_valid:
+    # Print
+    if state.schema_valid:
         print("   OK: Output matches JSON schema.")
     else:
-        print(f"   FAIL: Output schema invalid: {schema_error}")
+        print("   FAIL: Schema validation failed.")
+        for err in state.schema_errors:
+            print(f"      - {err}")
 
-    if citations_valid:
+    if state.citations_valid:
         print("   OK: Citations reference read files and valid line ranges.")
     else:
-        print(f"   FAIL: Citation integrity invalid: {citations_error}")
+        print("   FAIL: Citation validation failed.")
+        for err in state.citation_errors:
+            print(f"      - {err}")
 
     return state

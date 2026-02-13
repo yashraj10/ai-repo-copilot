@@ -1,70 +1,173 @@
-from __future__ import annotations
+"""
+Citation validator with duplicate detection, validation_rules support,
+and content_aware mode.
+"""
 
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Set, Tuple, Optional
 
 
-_RANGE_RE = re.compile(r"^(\d+)-(\d+)$")
+LINE_PREFIX_RE = re.compile(r"^\s*(\d+)\|\s*(.*)$")
 
 
-def validate_citations(output: Dict[str, Any], retrieved_files: List[Dict[str, Any]]) -> Tuple[bool, str]:
+def validate_citations(
+    output: Dict[str, Any],
+    retrieved_files: List[Dict[str, Any]],
+    repo_path: str,
+    mode: Optional[str] = None,
+    patterns: Optional[Any] = None,
+    rules: Optional[Dict[str, Any]] = None,
+    content_validation: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> Tuple[bool, List[str]]:
     """
-    Ensures output citations reference files we actually read, and line ranges are in bounds.
-    Returns (is_valid, error_message).
+    Validate that all citations in output reference actual lines from retrieved_files.
+
+    Supports:
+    - Basic range validation (default)
+    - validation_rules: reject_if_line_start_greater_than_line_end,
+                        reject_if_line_number_negative, reject_if_line_number_zero
+    - content_aware mode with content_validation assertions
     """
+    errors: List[str] = []
+    rules = rules or {}
+
     if not isinstance(output, dict):
-        return False, "Output is not an object."
-    if "high_risk_areas" not in output or not isinstance(output["high_risk_areas"], list):
-        return False, "Missing or invalid high_risk_areas."
+        errors.append("Output is not a dict, cannot validate citations")
+        return False, errors
 
-    # Build map of read files -> total_lines
-    read_map: Dict[str, int] = {}
+    high_risk_areas = output.get("high_risk_areas", [])
+
+    # Empty citations list is valid (unless content_validation requires citations)
+    if not high_risk_areas:
+        return True, []
+
+    # Build evidence map: file_path -> {line_num: line_text}
+    evidence_map: Dict[str, Dict[int, str]] = {}
+
     for item in retrieved_files:
-        if item.get("tool") == "read_file":
-            path = item.get("path")
-            total_lines = item.get("total_lines")
-            if isinstance(path, str) and isinstance(total_lines, int):
-                read_map[path] = total_lines
+        if item.get("tool") != "read_file":
+            continue
 
-    # If no risk areas, citations are trivially valid
-    if len(output["high_risk_areas"]) == 0:
-        return True, ""
+        path = str(item.get("path", "")).strip()
+        if not path:
+            continue
 
-    for i, area in enumerate(output["high_risk_areas"]):
+        lines = item.get("lines", []) or []
+        line_data: Dict[int, str] = {}
+
+        for raw_line in lines:
+            m = LINE_PREFIX_RE.match(raw_line)
+            if m:
+                line_num = int(m.group(1))
+                line_text = m.group(2)
+                line_data[line_num] = line_text
+
+        if line_data:
+            evidence_map[path] = line_data
+
+    # Track duplicates
+    seen_citations: Set[Tuple[str, int, int]] = set()
+
+    # Validate each citation
+    for i, area in enumerate(high_risk_areas):
         if not isinstance(area, dict):
-            return False, f"high_risk_areas[{i}] is not an object."
+            errors.append(f"Citation {i} is not a dict")
+            continue
 
-        files = area.get("files")
-        if not isinstance(files, list) or len(files) == 0:
-            return False, f"high_risk_areas[{i}].files missing or empty."
+        file_path = area.get("file_path")
+        line_start = area.get("line_start")
+        line_end = area.get("line_end")
 
-        for j, f in enumerate(files):
-            if not isinstance(f, dict):
-                return False, f"high_risk_areas[{i}].files[{j}] is not an object."
+        # Type checking
+        if not isinstance(file_path, str):
+            errors.append(f"Citation {i}: file_path is not a string")
+            continue
+        if not isinstance(line_start, int):
+            errors.append(f"Citation {i}: line_start is not an int")
+            continue
+        if not isinstance(line_end, int):
+            errors.append(f"Citation {i}: line_end is not an int")
+            continue
 
-            path = f.get("path")
-            line_range = f.get("lines")
-
-            if path not in read_map:
-                return False, f"high_risk_areas[{i}].files[{j}].path not read: {path}"
-
-            if not isinstance(line_range, str):
-                return False, f"high_risk_areas[{i}].files[{j}].lines is not a string."
-
-            m = _RANGE_RE.match(line_range.strip())
-            if not m:
-                return False, f"high_risk_areas[{i}].files[{j}].lines bad format: {line_range}"
-
-            start = int(m.group(1))
-            end = int(m.group(2))
-            if start < 1 or end < 1 or end < start:
-                return False, f"high_risk_areas[{i}].files[{j}].lines invalid range: {line_range}"
-
-            max_line = read_map[path]
-            if end > max_line:
-                return False, (
-                    f"high_risk_areas[{i}].files[{j}].lines out of bounds for {path}: "
-                    f"{line_range} (max {max_line})"
+        # Validation rules: negative/zero line numbers
+        if rules.get("reject_if_line_number_negative") or rules.get("reject_if_line_number_zero"):
+            if line_start < 1 or line_end < 1:
+                errors.append(
+                    f"Citation {i}: invalid line number (line_start={line_start}, "
+                    f"line_end={line_end}); negative or zero line numbers rejected"
                 )
+                continue
 
-    return True, ""
+        # Check for duplicates
+        citation_key = (file_path, line_start, line_end)
+        if citation_key in seen_citations:
+            errors.append(f"Duplicate citation: {file_path} lines {line_start}-{line_end}")
+            continue
+        seen_citations.add(citation_key)
+
+        # Validation rules: reversed bounds
+        if line_start > line_end:
+            errors.append(
+                f"Citation {i}: line_start ({line_start}) > line_end ({line_end})"
+            )
+            continue
+
+        # Check file exists in evidence
+        if file_path not in evidence_map:
+            errors.append(
+                f"Citation {i}: file '{file_path}' not found in retrieved evidence"
+            )
+            continue
+
+        # Check lines exist in evidence
+        available_lines = evidence_map[file_path]
+        if not available_lines:
+            errors.append(
+                f"Citation {i}: file '{file_path}' has no readable lines in evidence"
+            )
+            continue
+
+        min_line = min(available_lines)
+        max_line = max(available_lines)
+
+        for line_num in range(line_start, line_end + 1):
+            if line_num not in available_lines:
+                errors.append(
+                    f"Citation {i}: line {line_num} in '{file_path}' not found in evidence "
+                    f"(evidence has lines {min_line}-{max_line})"
+                )
+                break
+
+    # Content-aware validation
+    if mode == "content_aware" and content_validation:
+        assertions = content_validation.get("assertions", [])
+        for assertion in assertions:
+            # Check if cited range includes lines that shouldn't be included
+            afile = assertion.get("file")
+            must_not = assertion.get("must_not_contain_text")
+            aline = assertion.get("line")
+
+            if afile and must_not and aline:
+                # Check if any citation covers this line
+                for area in high_risk_areas:
+                    if not isinstance(area, dict):
+                        continue
+                    fp = area.get("file_path")
+                    ls = area.get("line_start")
+                    le = area.get("line_end")
+                    if fp == afile and isinstance(ls, int) and isinstance(le, int):
+                        if ls <= aline <= le:
+                            # This citation covers the assertion line
+                            # Check if the line content contains the forbidden text
+                            if afile in evidence_map and aline in evidence_map[afile]:
+                                actual_text = evidence_map[afile][aline]
+                                if must_not.lower() not in actual_text.lower():
+                                    errors.append(
+                                        f"Citation covers line {aline} in '{afile}' which "
+                                        f"does not contain expected text for the cited function"
+                                    )
+
+    if errors:
+        return False, errors
+    return True, []

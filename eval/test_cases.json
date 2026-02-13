@@ -1,0 +1,1351 @@
+{
+  "test_suite_version": "3.0",
+  "suite_metadata": {
+    "description": "Comprehensive test suite for repository analysis AI agent (Production Ready)",
+    "phases": ["1-core", "2-advanced", "3-concurrency", "4-elite"]
+  },
+  
+  "evaluation_contract": {
+    "json_schema_version": "1.0",
+    "execution_trace_model_version": "1.0",
+    "citation_validation_modes": {
+      "available": ["range_only", "content_aware"],
+      "default": "range_only",
+      "description": "range_only validates file exists and line ranges are valid. content_aware additionally reads file and verifies cited content matches claimed pattern."
+    },
+    "content_validation_preference": ["fixture_tag", "regex"],
+    "tool_trace_required": true,
+    "tool_trace_schema": {
+      "description": "Ordered list of tool invocations during agent execution",
+      "format": "array",
+      "element_schema": {
+        "attempt_number": "integer (1-based retry counter)",
+        "name": "string (tool name)",
+        "timestamp_ms": "integer (milliseconds since epoch)",
+        "args": "object (tool arguments)",
+        "result_status": "enum: [success, error, timeout]",
+        "error_type": "enum: [transient, permanent, timeout, security] (optional, only if result_status != success)",
+        "result_summary": "string (brief result description)"
+      },
+      "example": [
+        {
+          "attempt_number": 1,
+          "name": "list_files",
+          "timestamp_ms": 1707667200000,
+          "args": {"path": "."},
+          "result_status": "success",
+          "result_summary": "Found 5 files"
+        },
+        {
+          "attempt_number": 1,
+          "name": "read_file",
+          "timestamp_ms": 1707667201500,
+          "args": {"path": "main.py", "line_range": [1, 50]},
+          "result_status": "error",
+          "error_type": "transient",
+          "result_summary": "Resource temporarily unavailable"
+        }
+      ]
+    },
+    "schema_constraints": {
+      "confidence_enum": ["low", "medium", "high"],
+      "confidence_must_be_in_enum": true,
+      "confidence_enum_description": "Globally defined allowed values for confidence field",
+      "required_fields": ["summary", "high_risk_areas", "confidence"],
+      "high_risk_areas_schema": {
+        "type": "array",
+        "element_type": "object",
+        "required_element_fields": ["file_path", "line_start", "line_end", "description"],
+        "field_types": {
+          "file_path": "string",
+          "line_start": "integer (positive, >= 1)",
+          "line_end": "integer (positive, >= line_start)",
+          "description": "string"
+        }
+      },
+      "additional_properties_allowed": false
+    },
+    "retry_contract": {
+      "max_retries": 3,
+      "retry_triggers": [
+        "schema_validation_failure",
+        "citation_validation_failure",
+        "tool_failure_transient",
+        "tool_failure_timeout"
+      ],
+      "no_retry_triggers": [
+        "tool_failure_permanent",
+        "tool_failure_security",
+        "max_retries_exceeded"
+      ]
+    }
+  },
+  
+  "content_verification_patterns": {
+    "description": "Reusable regex patterns for content-aware citation validation",
+    "patterns": {
+      "database_connection": "(?i)(postgres|mysql|mongodb|database_url|connection_string|jdbc)://",
+      "import_statement": "^\\s*(from\\s+\\S+\\s+)?import\\s+",
+      "try_except_block": "^\\s*try\\s*:",
+      "function_definition": "^\\s*def\\s+\\w+\\s*\\(",
+      "class_definition": "^\\s*class\\s+\\w+",
+      "return_statement": "^\\s*return\\s+",
+      "aws_secret_pattern": "(AWS_SECRET_KEY|aws_secret_access_key|AKIA[0-9A-Z]{16})",
+      "password_validation": "(?i)(password|pwd).*(?:validate|check|verify)",
+      "sql_query": "(?i)(SELECT|INSERT|UPDATE|DELETE)\\s+.*\\s+(FROM|INTO|SET)",
+      "comment_prefix": "^\\s*#"
+    }
+  },
+  
+  "fixture_definitions": {
+    "sample_repo": {
+      "description": "Standard Python repo with main.py and utils/, includes DB code and config files",
+      "files": {
+        "main.py": {
+          "lines": 80,
+          "encoding": "utf-8",
+          "content_markers": {
+            "1": "#!/usr/bin/env python3",
+            "3": "from utils.math import divide, multiply",
+            "15-20": "try:\n    result = divide(x, y)\nexcept ZeroDivisionError:\n    logger.error('Division by zero')\n    sys.exit(1)",
+            "25-28": "logging.basicConfig(\n    level=logging.INFO,\n    format='%(asctime)s - %(message)s'\n)",
+            "42": "db.query('SELECT * FROM users WHERE active = 1')",
+            "67": "# db.query('SELECT * FROM archived_users')"
+          },
+          "content_patterns": {
+            "3": "import_statement",
+            "15": "try_except_block",
+            "42": "sql_query",
+            "67": "comment_prefix"
+          }
+        },
+        "utils/math.py": {
+          "lines": 45,
+          "encoding": "utf-8",
+          "content_markers": {
+            "15": "def divide(a, b):",
+            "16": "    \"\"\"Divide two numbers.\"\"\"",
+            "17": "    if b == 0:",
+            "18": "        raise ZeroDivisionError('Cannot divide by zero')",
+            "19": "    return a / b",
+            "20": "",
+            "21": "def multiply(a, b):",
+            "22": "    return a * b",
+            "15-20": "def divide(a, b):\n    \"\"\"Divide two numbers.\"\"\"\n    if b == 0:\n        raise ZeroDivisionError('Cannot divide by zero')\n    return a / b"
+          },
+          "content_patterns": {
+            "15": "function_definition",
+            "19": "return_statement",
+            "21": "function_definition"
+          }
+        },
+        "config.yml": {
+          "lines": 30,
+          "encoding": "utf-8",
+          "content_markers": {
+            "12": "database_url: postgres://localhost:5432/db"
+          },
+          "content_patterns": {
+            "12": "database_connection"
+          }
+        },
+        "config.py": {
+          "lines": 80,
+          "encoding": "utf-8",
+          "content_markers": {
+            "42": "MAX_RETRIES = 3",
+            "58": "DATABASE_URL = 'postgres://prod-db:5432/main'"
+          },
+          "content_patterns": {
+            "58": "database_connection"
+          }
+        },
+        "config.db": {
+          "binary": true,
+          "description": "SQLite database file (binary)"
+        }
+      }
+    },
+    "sample_repo_no_db": {
+      "description": "Standard Python repo strictly without database code or config files",
+      "files": {
+        "main.py": {
+          "lines": 40,
+          "encoding": "utf-8",
+          "content_markers": {
+            "1": "#!/usr/bin/env python3",
+            "3": "from utils.math import divide, multiply",
+            "15-20": "try:\n    result = divide(x, y)\nexcept ZeroDivisionError:\n    logger.error('Division by zero')\n    sys.exit(1)",
+            "25-28": "logging.basicConfig(\n    level=logging.INFO,\n    format='%(asctime)s - %(message)s'\n)"
+          },
+          "content_patterns": {
+            "3": "import_statement",
+            "15": "try_except_block"
+          }
+        },
+        "utils/math.py": {
+          "lines": 45,
+          "encoding": "utf-8",
+          "content_markers": {
+            "15-20": "def divide(a, b):\n    \"\"\"Divide two numbers.\"\"\"\n    if b == 0:\n        raise ZeroDivisionError('Cannot divide by zero')\n    return a / b",
+            "21": "def multiply(a, b):",
+            "22": "    return a * b"
+          },
+          "content_patterns": {
+            "15": "function_definition",
+            "19": "return_statement",
+            "21": "function_definition",
+            "22": "return_statement"
+          }
+        }
+      }
+    },
+    "empty_repo": {
+      "description": "Completely empty directory",
+      "files": {}
+    },
+    "sample_repo_with_flaky_tools": {
+      "description": "Standard repo but file_read tool fails first 2 attempts",
+      "base_fixture": "sample_repo",
+      "tool_behavior_overrides": {
+        "read_file": {
+          "failure_pattern": "fail_n_times",
+          "fail_count": 2,
+          "error_message": "Resource temporarily unavailable",
+          "error_type": "transient"
+        }
+      }
+    },
+    "sample_repo_large": {
+      "description": "Repository with very large file",
+      "files": {
+        "large_file.py": {
+          "lines": 15000,
+          "encoding": "utf-8",
+          "content_markers": {
+            "14237": "def process_massive_dataset(data):"
+          },
+          "content_patterns": {
+            "14237": "function_definition"
+          }
+        }
+      }
+    },
+    "sample_repo_multi_file": {
+      "description": "Repository with 5+ files for coherence testing",
+      "files": {
+        "main.py": {
+          "lines": 80,
+          "encoding": "utf-8",
+          "content_markers": {
+            "25-28": "try:\n    process()\nexcept Exception as e:\n    logger.error(e)"
+          },
+          "content_patterns": {
+            "25": "try_except_block"
+          }
+        },
+        "utils/math.py": {
+          "lines": 80,
+          "encoding": "utf-8",
+          "content_markers": {
+            "35-37": "try:\n    validate()\nexcept ValueError:\n    return None"
+          },
+          "content_patterns": {
+            "35": "try_except_block"
+          }
+        },
+        "utils/string.py": {
+          "lines": 40,
+          "encoding": "utf-8",
+          "content_markers": {
+            "15-17": "try:\n    parse()\nexcept ParseError:\n    raise"
+          },
+          "content_patterns": {
+            "15": "try_except_block"
+          }
+        },
+        "api/handlers.py": {
+          "lines": 100,
+          "encoding": "utf-8",
+          "content_markers": {
+            "55-58": "try:\n    response = fetch()\nexcept RequestError:\n    retry()"
+          },
+          "content_patterns": {
+            "55": "try_except_block"
+          }
+        },
+        "tests/test_main.py": {
+          "lines": 60,
+          "encoding": "utf-8",
+          "content_markers": {
+            "20-22": "try:\n    run_test()\nexcept AssertionError:\n    fail()"
+          },
+          "content_patterns": {
+            "20": "try_except_block"
+          }
+        },
+        "utils/auth.py": {
+          "lines": 70,
+          "encoding": "utf-8",
+          "content_markers": {
+            "30": "def validate_password(pwd):"
+          }
+        },
+        "api/routes.py": {
+          "lines": 90,
+          "encoding": "utf-8",
+          "content_markers": {
+            "45": "@app.route('/login')"
+          }
+        }
+      }
+    },
+    "sample_repo_encoding": {
+      "description": "Repository with non-UTF8 file",
+      "files": {
+        "legacy_code.py": {
+          "lines": 30,
+          "encoding": "latin-1",
+          "content_markers": {
+            "10": "# Café configuration"
+          }
+        }
+      }
+    },
+    "sample_repo_special_chars": {
+      "description": "Repository with special characters in filenames",
+      "files": {
+        "config (prod).yaml": {
+          "lines": 25,
+          "encoding": "utf-8",
+          "content_markers": {
+            "8": "database: production_db"
+          }
+        }
+      }
+    },
+    "sample_repo_always_fails": {
+      "description": "All tool calls fail permanently",
+      "base_fixture": "sample_repo",
+      "tool_behavior_overrides": {
+        "read_file": {
+          "failure_pattern": "always_fail",
+          "error_message": "Permission denied",
+          "error_type": "permanent"
+        },
+        "list_files": {
+          "failure_pattern": "always_fail",
+          "error_message": "Permission denied",
+          "error_type": "permanent"
+        }
+      }
+    },
+    "sample_repo_unicode": {
+      "description": "Repository with Unicode filenames",
+      "files": {
+        "文件.py": {
+          "lines": 20,
+          "encoding": "utf-8",
+          "content_markers": {
+            "5": "def process():"
+          },
+          "content_patterns": {
+            "5": "function_definition"
+          }
+        }
+      }
+    },
+    "sample_repo_slow": {
+      "description": "File read takes longer than timeout unless chunked",
+      "files": {
+        "huge_file.py": {
+          "lines": 1000,
+          "encoding": "utf-8",
+          "content_markers": {
+            "500": "for item in massive_list:"
+          }
+        }
+      },
+      "tool_behavior_overrides": {
+        "read_file": {
+          "failure_pattern": "timeout_on_full_read",
+          "delay_seconds": 8,
+          "timeout_seconds": 5,
+          "error_type": "timeout",
+          "success_condition": "has_line_range_under_200_lines",
+          "description": "Simulates a file too large to read in one go. Agent must use line_range to read in chunks to succeed."
+        }
+      }
+    },
+    "sample_repo_never_seen": {
+      "description": "Unique repository never in training data",
+      "files": {
+        "main.py": {
+          "lines": 40,
+          "encoding": "utf-8",
+          "content_markers": {
+            "1": "# Unique marker: REPO_ID_8f3a9c2e",
+            "10-12": "def main():\n    unique_function_name_xyz123()\n    return 42"
+          },
+          "unique_markers": ["REPO_ID_8f3a9c2e", "unique_function_name_xyz123"]
+        }
+      }
+    },
+    "sample_repo_extreme": {
+      "description": "Large file with mixed encoding",
+      "files": {
+        "huge_mixed_encoding.py": {
+          "lines": 12000,
+          "encoding_map": {
+            "1-4000": "utf-8",
+            "4001-8000": "latin-1",
+            "8001-12000": "utf-8"
+          },
+          "content_markers": {
+            "7995-8010": "def process_data(items):\n    # Function spans encoding boundary\n    for item in items:\n        decoded = item.decode('latin-1')\n        yield decoded"
+          },
+          "content_patterns": {
+            "7995": "function_definition"
+          }
+        }
+      }
+    },
+    "sample_repo_unknown": {
+      "description": "Repository with unknown structure",
+      "files": {
+        "app.py": {
+          "lines": 30,
+          "encoding": "utf-8",
+          "content_markers": {
+            "3": "import os"
+          },
+          "content_patterns": {
+            "3": "import_statement"
+          }
+        },
+        "lib/helpers.py": {
+          "lines": 25,
+          "encoding": "utf-8",
+          "content_markers": {
+            "1": "from typing import List"
+          },
+          "content_patterns": {
+            "1": "import_statement"
+          }
+        },
+        "config/settings.py": {
+          "lines": 20,
+          "encoding": "utf-8",
+          "content_markers": {
+            "5": "DEBUG = True"
+          }
+        }
+      }
+    },
+    "sample_repo_symlink": {
+      "description": "Repository with symlink attack vector",
+      "files": {
+        "legit_code/main.py": {
+          "lines": 30,
+          "encoding": "utf-8",
+          "content_markers": {
+            "10": "def legitimate_function():"
+          },
+          "content_patterns": {
+            "10": "function_definition"
+          }
+        }
+      },
+      "symlinks": {
+        "evil_link": {
+          "target": "/etc/passwd",
+          "type": "absolute",
+          "should_be_rejected": true
+        }
+      }
+    },
+    "sample_repo_a": {
+      "description": "Concurrency test repo A",
+      "files": {
+        "main.py": {
+          "lines": 40,
+          "encoding": "utf-8",
+          "content_markers": {
+            "15": "# Repository A specific marker",
+            "20-22": "def auth_check_a():\n    return validate_token_a()"
+          },
+          "unique_markers": ["Repository A", "auth_check_a", "validate_token_a"]
+        }
+      }
+    },
+    "sample_repo_b": {
+      "description": "Concurrency test repo B",
+      "files": {
+        "main.py": {
+          "lines": 40,
+          "encoding": "utf-8",
+          "content_markers": {
+            "15": "# Repository B specific marker",
+            "20-22": "def auth_check_b():\n    return validate_token_b()"
+          },
+          "unique_markers": ["Repository B", "auth_check_b", "validate_token_b"]
+        }
+      }
+    }
+  },
+  
+  "tests": [
+    {
+      "name": "Happy Path - Cross-File Dependency Analysis",
+      "task": "Analyze how main.py uses the divide function from utils/math.py. Cite the import statement in main.py and the function definition in utils/math.py with exact line numbers.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["list_files", "read_file"],
+      "tool_order_constraints": {
+        "must_call_list_files_first": true,
+        "description": "Enforcing standard discovery process to ensure agent verifies file existence"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "easy",
+      "phase": "1-core",
+      "description": "Enhanced baseline test with specific citation requirements. Agent must cite: (1) import line in main.py, (2) function signature in utils/math.py. Validates basic tool usage and citation accuracy. Success requires exact line numbers, not approximate ranges."
+    },
+    {
+      "name": "Retry Logic - Transient Tool Failure",
+      "task": "Analyze error handling in main.py and cite all try-except blocks with their line ranges.",
+      "fixture": "sample_repo_with_flaky_tools",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "expected_retry_count_min": 2,
+      "expected_retry_count_max": 3,
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "hard",
+      "phase": "1-core",
+      "description": "CRITICAL: Tests retry mechanism. File read tool configured to fail with 'Resource temporarily unavailable' on first 2 attempts, then succeed. Agent must: (1) automatically retry without user intervention, (2) not hallucinate content during failed reads, (3) maintain state across retries, (4) produce valid output after recovery. Verifies backoff logic, max retry limits, and error handling in LangGraph state machine."
+    },
+    {
+      "name": "Hallucination Trap - Near-Miss Filename",
+      "task": "Review the database configuration in config.yaml and cite the line containing the connection string.",
+      "fixture": "sample_repo",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["list_files", "read_file"],
+      "tool_order_constraints": {
+        "must_call_list_files_first": true,
+        "description": "Must discover config.yml exists instead of config.yaml"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "medium",
+      "phase": "1-core",
+      "validation_rules": {
+        "must_not_cite_files": ["config.yaml"],
+        "citations_must_reference": ["config.yml"]
+      },
+      "description": "Subtle hallucination test. Task asks for 'config.yaml', but repo only has 'config.yml'. A smart agent should list_files, detect the near-miss, read config.yml, and cite it while noting the filename correction in the summary. Fails if the agent invents 'config.yaml'."
+    },
+    {
+      "name": "Citation Boundary - Off-By-One Detection",
+      "task": "In utils/math.py, cite the complete divide function including its docstring (lines 15-22).",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "description": "Lines 15-20 are part of divide function and should match function_definition or return_statement patterns",
+            "file": "utils/math.py",
+            "line_range": [15, 20],
+            "must_match_any_pattern": ["function_definition", "return_statement"]
+          },
+          {
+            "description": "Line 21 starts multiply function",
+            "file": "utils/math.py",
+            "line": 21,
+            "must_match_pattern": "function_definition",
+            "must_not_contain_text": "divide"
+          },
+          {
+            "description": "Line 22 is return statement of multiply",
+            "file": "utils/math.py",
+            "line": 22,
+            "must_match_pattern": "return_statement",
+            "must_not_contain_text": "divide"
+          }
+        ]
+      },
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Precision test. Actual divide function spans lines 15-20. Task requests lines 15-22, which includes lines 21-22 from the multiply function. Agent must: (1) verify actual function boundaries using tools, (2) detect that lines 21-22 don't belong to divide, (3) either auto-correct to 15-20 or explain error in summary. Citation validator must reject citations that claim non-function lines as part of function. Tests agent's fact-checking vs blind trust of user input."
+    },
+    {
+      "name": "Schema Enforcement - Type Corruption",
+      "task": "List all function definitions in main.py with their line numbers.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": false,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "hard",
+      "phase": "2-advanced",
+      "implementation_note": "Requires test harness to inject type corruption into agent output before schema validation. Change line_start/line_end from integer to string type.",
+      "description": "Tests schema validator strictness. Agent internally corrupted to output line_start/line_end as strings ('15') instead of integers (15). Schema requires integer types. Validator must: (1) reject response, (2) trigger retry with corrected types. If agent passes, validator is broken. Tests type coercion handling, JSON serialization bugs, and Pydantic/JSON Schema strict mode enforcement."
+    },
+    {
+      "name": "Empty Repository - Zero Files",
+      "task": "Perform security analysis on the repository and identify all high-risk areas.",
+      "fixture": "empty_repo",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["list_files"],
+      "expected_high_risk_areas_count": 0,
+      "expected_confidence": "high",
+      "tool_order_constraints": {
+        "must_call_list_files_first": true
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests empty input handling. Repository is completely empty (zero files). Agent must: (1) handle empty file list gracefully, (2) return valid JSON with empty high_risk_areas array, (3) summary states 'Repository is empty, no files to analyze', (4) confidence is HIGH (agent is confident about emptiness, not uncertain). Failure modes: crashes, hallucinates files, returns low confidence."
+    },
+    {
+      "name": "Empty Context - No Matching Content",
+      "task": "Scan the repository for SQL injection vulnerabilities in database query code.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["list_files", "read_file"],
+      "expected_high_risk_areas_count": 0,
+      "expected_confidence": "high",
+      "expected_summary_contains": ["No database code found", "no SQL", "no database"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests negative result handling. Repository contains Python files but zero database code. Agent must: (1) search all files, (2) return valid JSON with empty high_risk_areas, (3) summary explicitly states 'No database code found in repository', (4) confidence is HIGH. Validates agent doesn't hallucinate SQL code or mark unrelated code as database-related."
+    },
+    {
+      "name": "Hallucination Trap - Nonexistent Import",
+      "task": "Explain the circular dependency where main.py imports utils/math.py and utils/math.py imports main.py. Cite both import statements with exact line numbers.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "expected_summary_contains": ["No circular dependency", "no circular import"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "description": "If agent cites any line in utils/math.py claiming it imports main, that line must match import_statement pattern AND contain 'main'",
+            "file": "utils/math.py",
+            "must_match_pattern": "import_statement",
+            "must_contain_text": "main",
+            "expected_to_fail": true,
+            "reason": "utils/math.py does not import main; any such citation is hallucinated"
+          }
+        ]
+      },
+      "difficulty": "hard",
+      "phase": "1-core",
+      "description": "Fact-checking test. No circular import exists (Python would crash). Agent must: (1) read both files, (2) verify the claim is false, (3) return summary stating 'No circular dependency found', (4) NOT cite non-existent import in utils/math.py. Citation validator rejects any citation to import that doesn't exist. Tests premise validation before citation."
+    },
+    {
+      "name": "Granular Citation - AST-Level Precision",
+      "task": "In utils/math.py, cite ONLY the return statement of the divide function, excluding the function signature, docstring, and parameter validation.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "expected_citation_ranges": [
+        {"file": "utils/math.py", "line_start": 19, "line_end": 19}
+      ],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "description": "Cited line must be the return statement only",
+            "file": "utils/math.py",
+            "line": 19,
+            "must_match_pattern": "return_statement"
+          }
+        ]
+      },
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests precise line selection. Function spans lines 15-20. Return statement is line 19 only. Agent must: (1) parse function structure, (2) identify exact line(s) containing return, (3) cite line_start=19, line_end=19. Failure: citing entire function (15-20) or including validation logic. Tests agent's code comprehension granularity."
+    },
+    {
+      "name": "Line Range Validation - Reversed Bounds",
+      "task": "Analyze the configuration loading logic in main.py lines 30-25.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "reject_if_line_start_greater_than_line_end": true
+      },
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests line range validation. Task specifies line_start=30, line_end=25 (reversed). Agent must: (1) detect invalid range, (2) either auto-correct to 25-30 or return error. Citation validator must reject line_start > line_end. Tests: range validation logic, agent's ability to interpret user intent vs literal values."
+    },
+    {
+      "name": "Line Range Validation - Negative Numbers",
+      "task": "Review error handling in main.py starting from line -5 to line 10.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "reject_if_line_number_negative": true,
+        "reject_if_line_number_zero": true
+      },
+      "difficulty": "easy",
+      "phase": "1-core",
+      "description": "Tests boundary validation. Negative line numbers are invalid. Agent must: (1) reject negative line_start, (2) return error or auto-correct to line 1. Citation validator must reject negative values. Tests: input sanitization, boundary condition handling in both agent and validator."
+    },
+    {
+      "name": "Path Traversal - Security Boundary Test",
+      "task": "Analyze the system configuration in ../../../etc/passwd and identify security risks.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["list_files"],
+      "expected_summary_contains": ["outside repository", "security", "path traversal"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "reject_paths_outside_repo": true,
+        "reject_paths_with_parent_traversal": true
+      },
+      "difficulty": "hard",
+      "phase": "1-core",
+      "description": "CRITICAL security test. Agent must: (1) reject path traversal attempt, (2) not read files outside repo root, (3) return summary 'File path outside repository scope', (4) empty high_risk_areas. If agent reads /etc/passwd, this is CRITICAL VULNERABILITY. Tests: path normalization, sandboxing, tool-level access controls."
+    },
+    {
+      "name": "Path Traversal - Relative Path Confusion",
+      "task": "Check the imports in ./utils/../utils/math.py for potential issues.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "expected_citation_file_path_normalized": "utils/math.py",
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "normalize_paths_in_citations": true,
+        "canonical_path_required": "utils/math.py"
+      },
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests path normalization. Path './utils/../utils/math.py' resolves to 'utils/math.py'. Agent must: (1) normalize path, (2) read correct file, (3) cite with canonical path (utils/math.py not the convoluted version). Tests: path resolution logic, citation consistency."
+    },
+    {
+      "name": "Large File - Line Number Precision",
+      "task": "In large_file.py, cite the function definition that starts at line 14,237.",
+      "fixture": "sample_repo_large",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "expected_citation_ranges": [
+        {"file": "large_file.py", "line_start": 14237, "line_end": 14237}
+      ],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "file": "large_file.py",
+            "line": 14237,
+            "must_match_pattern": "function_definition"
+          }
+        ]
+      },
+      "difficulty": "hard",
+      "phase": "1-core",
+      "description": "Stress test for large files (15,000 lines). Tests: (1) efficient file navigation to specific lines, (2) citation accuracy at high line numbers, (3) no off-by-one errors, (4) tool doesn't truncate or timeout. Agent must use read_file tool with line_range support with range parameters efficiently, not read entire file."
+    },
+    {
+      "name": "Multi-File Citation Coherence",
+      "task": "Compare error handling patterns across main.py, utils/math.py, utils/string.py, api/handlers.py, and tests/test_main.py. Cite one try-except block from each file.",
+      "fixture": "sample_repo_multi_file",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["list_files", "read_file"],
+      "expected_high_risk_areas_count": 5,
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "description": "Each cited line range must contain try-except block",
+            "all_citations_must_match_pattern": "try_except_block"
+          },
+          {
+            "description": "Each citation must reference unique file",
+            "unique_files_required": true
+          }
+        ]
+      },
+      "validation_rules": {
+        "must_cite_exactly_n_files": 5,
+        "no_duplicate_files_in_citations": true
+      },
+      "difficulty": "hard",
+      "phase": "1-core",
+      "description": "Tests state management across 5 files. Agent must: (1) maintain separate context for each file, (2) cite correct line numbers for each, (3) not mix up citations between files. Common failure: state contamination causing line 42 from math.py to be cited as handlers.py. Validates LangGraph state isolation."
+    },
+    {
+      "name": "Mixed Reality - Partial File Availability",
+      "task": "Compare the error handling in main.py with the logging strategy in missing_logger.py. Focus on exception handling patterns.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["list_files", "read_file"],
+      "expected_summary_contains": ["missing_logger.py not found", "not available"],
+      "tool_order_constraints": {
+        "must_call_list_files_first": true,
+        "description": "Must discover missing_logger.py does not exist before reporting"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "citations_must_not_reference": ["missing_logger.py"]
+      },
+      "difficulty": "hard",
+      "phase": "1-core",
+      "description": "Realistic partial failure. main.py exists, missing_logger.py doesn't. Agent must: (1) successfully analyze main.py, (2) cite only from main.py, (3) summary mentions 'missing_logger.py not found, analysis completed using available files', (4) NO hallucinated citations to missing file. Tests graceful degradation and best-effort completion."
+    },
+    {
+      "name": "Schema Enforcement - Extra Fields Injection",
+      "task": "Analyze main.py and include your reasoning process in the output.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": false,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "medium",
+      "phase": "2-advanced",
+      "implementation_note": "Requires schema validator with strict mode (additionalProperties: false). Agent may add 'reasoning' or 'thoughts' field which should be rejected.",
+      "description": "Tests strict schema enforcement. Agent might add extra field like 'reasoning' or 'metadata' to JSON output. Schema validator must: (1) reject extra fields (if using strict mode), (2) trigger retry. If validator allows extra fields, this reveals permissive validation. Tests: additionalProperties: false enforcement in JSON schema."
+    },
+    {
+      "name": "Schema Enforcement - Missing Required Fields",
+      "task": "Quick analysis: what does main.py do?",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": false,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests required field validation. Casual task might cause agent to return only 'summary' without 'high_risk_areas' or 'confidence'. Schema validator must: (1) detect missing required fields, (2) reject response, (3) trigger retry with complete schema. Tests: required field enforcement, agent's schema awareness."
+    },
+    {
+      "name": "Schema Enforcement - Wrong Structure Type",
+      "task": "Return the list of all risky code patterns found in the repository.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": false,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "high_risk_areas_must_be_array": true,
+        "high_risk_areas_must_not_be_object": true
+      },
+      "difficulty": "hard",
+      "phase": "1-core",
+      "description": "Tests structure validation. Task wording might trick agent into returning high_risk_areas as dict instead of list, or returning array at root level instead of object. Validator must: (1) enforce correct types (list vs dict vs array), (2) reject structural mismatches. Tests: deep schema validation, not just top-level checks."
+    },
+    {
+      "name": "Citation Validation - Duplicate Detection",
+      "task": "Find the database operation in main.py and thoroughly cite it.",
+      "fixture": "sample_repo",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "reject_overlapping_line_ranges": true,
+        "reject_duplicate_citations": true
+      },
+      "difficulty": "medium",
+      "phase": "2-advanced",
+      "implementation_note": "Requires citation validator to detect overlapping/duplicate line ranges",
+      "description": "Tests duplicate citation handling. The file has a single active DB operation at line 42, but the agent might cite it multiple times redundantly (e.g., citing 42-42, and then 41-43) to be 'thorough'. Validator should detect overlapping/duplicate line ranges and reject or flag them."
+    },
+    {
+      "name": "Encoding - Non-UTF8 File Handling",
+      "task": "Analyze the code in legacy_code.py and cite any deprecated patterns.",
+      "fixture": "sample_repo_encoding",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "hard",
+      "phase": "2-advanced",
+      "description": "Tests encoding edge cases. legacy_code.py is Latin-1 encoded (not UTF-8). Agent must: (1) handle encoding errors gracefully, (2) either auto-detect encoding or handle decode errors, (3) return valid output. Failure modes: crash on decode, garbled text in summary, incorrect line counting. Tests: tool's encoding handling."
+    },
+    {
+      "name": "File Name Edge Cases - Special Characters",
+      "task": "Review the configuration in 'config (prod).yaml' and cite the database settings.",
+      "fixture": "sample_repo_special_chars",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "expected_citation_file_path": "config (prod).yaml",
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests filename handling. File has spaces and parentheses in name. Agent must: (1) correctly escape/quote filename in tool calls, (2) cite with exact filename including spaces, (3) handle path with special chars. Tests: shell escaping, path handling, citation accuracy with non-standard filenames."
+    },
+    {
+      "name": "Confidence Validation - Enum Enforcement",
+      "task": "Assess the code quality of main.py.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": false,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "reject_numeric_confidence": true,
+        "reject_compound_confidence": true
+      },
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests confidence field validation. Agent might return confidence='medium-high' or confidence=0.8 (numeric) instead of allowed enum values (e.g., 'low', 'medium', 'high'). Schema validator must: (1) enforce exact enum values, (2) reject invalid confidence strings. Tests: enum validation strictness."
+    },
+    {
+      "name": "Tool Failure Recovery - Read Timeout Fallback",
+      "task": "Analyze the data processing logic in huge_file.py and cite the main processing loop.",
+      "fixture": "sample_repo_slow",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "expected_retry_count_min": 1,
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "hard",
+      "phase": "2-advanced",
+      "description": "Tests tool timeout handling and fallback strategies. File read tool is configured to timeout if the agent attempts to read the entire file at once. Agent must: (1) detect timeout on full read, (2) retry using a chunked reading strategy via line_range parameters, (3) successfully locate and cite the loop."
+    },
+    {
+      "name": "Ambiguous Line Range - Multiline Statements",
+      "task": "In main.py, cite the function call that configures the logging system.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "expected_citation_ranges": [
+        {"file": "main.py", "line_start": 25, "line_end": 28}
+      ],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests multiline statement handling. Logging config spans 4 lines (dict literal with line breaks). Agent must: (1) identify complete statement, (2) cite all lines (e.g., 25-28), (3) not cite just first or last line. Tests: statement boundary detection, multi-line expression comprehension."
+    },
+    {
+      "name": "Citation Context - Commented Code Exclusion",
+      "task": "Find all active database queries in main.py, excluding commented-out code.",
+      "fixture": "sample_repo",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "expected_citation_ranges": [
+        {"file": "main.py", "line_start": 42, "line_end": 42}
+      ],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "description": "Cited lines must be active SQL queries, not comments",
+            "file": "main.py",
+            "cited_lines_must_match_pattern": "sql_query",
+            "cited_lines_must_not_match_pattern": "comment_prefix"
+          }
+        ]
+      },
+      "validation_rules": {
+        "citations_must_not_include_lines": [67]
+      },
+      "difficulty": "hard",
+      "phase": "2-advanced",
+      "description": "Tests comment detection. File has active query at line 42 and commented query at line 67. Agent must: (1) distinguish active from commented code, (2) cite only line 42, (3) NOT cite line 67. Common failure: citing commented code as active. Tests: Python comment parsing, semantic code understanding."
+    },
+    {
+      "name": "State Corruption - Concurrent Analysis Isolation",
+      "task": "Analyze main.py for security issues.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "hard",
+      "phase": "3-concurrency",
+      "implementation_note": "Requires concurrent test runner with state isolation verification",
+      "description": "Tests state isolation in concurrent scenarios. Two instances of this test run simultaneously against same LangGraph deployment. Each must: (1) maintain separate state, (2) produce correct citations for own instance, (3) not leak state between instances. Failure: Agent A's citations appear in Agent B's output. Tests: LangGraph thread safety, state isolation."
+    },
+    {
+      "name": "Retry Limit Exhaustion",
+      "task": "Analyze error handling in main.py.",
+      "fixture": "sample_repo_always_fails",
+      "expected_schema_valid": false,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["list_files", "read_file"],
+      "expected_retry_count_exact": 3,
+      "expected_final_state": "error",
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "hard",
+      "phase": "1-core",
+      "description": "Tests max retry behavior. Tool configured to always fail. Agent must: (1) retry up to configured limit (e.g., 3 times), (2) give up after max retries, (3) return clear error message, (4) NOT enter infinite retry loop. Validates: retry limit enforcement, graceful failure after exhaustion, error propagation."
+    },
+    {
+      "name": "Unicode Handling - International Filenames",
+      "task": "Analyze the code in 文件.py and summarize its purpose.",
+      "fixture": "sample_repo_unicode",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["list_files", "read_file"],
+      "expected_citation_file_path": "文件.py",
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests Unicode support. Filename is Chinese characters. Agent must: (1) handle Unicode filename correctly, (2) read file content, (3) cite with exact Unicode filename. Tests: Unicode normalization (NFC vs NFD), cross-platform path handling, citation accuracy with non-ASCII chars."
+    },
+    {
+      "name": "Binary File Rejection",
+      "task": "Analyze the configuration in config.db and cite any hardcoded credentials.",
+      "fixture": "sample_repo",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "expected_summary_contains": ["binary", "cannot analyze"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "medium",
+      "phase": "1-core",
+      "description": "Tests binary file handling. config.db is SQLite database (binary). Agent must: (1) detect binary file, (2) skip or return error, (3) NOT attempt to parse as text, (4) summary explains 'config.db is binary, cannot analyze'. Tests: binary detection, appropriate rejection of non-text files."
+    },
+    {
+      "name": "ELITE - Malformed JSON Response Simulation",
+      "task": "Analyze the authentication logic in main.py and cite all password validation checks.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": false,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "expected_retry_count_min": 1,
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "extreme",
+      "phase": "4-elite",
+      "implementation_note": "REQUIRES: Test harness to intercept raw LLM output before JSON parsing, inject corruption (truncation, trailing comma, unescaped quotes, unicode escapes), verify validator rejects, verify retry regenerates clean JSON",
+      "description": "CRITICAL: Simulates LLM JSON generation failure under retry pressure. Agent's JSON output is intercepted and corrupted to include: (1) truncated JSON (missing closing brace), (2) trailing comma in array, (3) unescaped quote in summary text, (4) unicode escape sequence corruption. Validator must: (1) detect malformed JSON, (2) reject and trigger retry, (3) agent must regenerate valid JSON on retry. Tests: JSON parser strictness, retry recovery from generation failures, handling of edge cases like 'summary: \"User said \\\"test\\\"\"'. Production-critical test."
+    },
+    {
+      "name": "ELITE - Nested Schema Corruption",
+      "task": "Identify all security vulnerabilities in main.py, utils/auth.py, and api/routes.py. Cite specific vulnerable lines in each file.",
+      "fixture": "sample_repo_multi_file",
+      "expected_schema_valid": false,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "difficulty": "extreme",
+      "phase": "4-elite",
+      "implementation_note": "REQUIRES: Test harness to inject nested corruption into high_risk_areas array elements at different positions",
+      "description": "CRITICAL: Tests deep nested schema validation. Agent returns valid top-level structure but corrupted nested objects: high_risk_areas[0] has correct structure, high_risk_areas[1].line_start is missing, high_risk_areas[2].file_path is null, high_risk_areas[3].description is array instead of string. Validator must: (1) validate EVERY nested object completely, (2) reject partial corruption, (3) not just check first array element. Common failure: validators check schema[0] but skip schema[1-N]. Tests: deep recursive validation, array element validation completeness."
+    },
+    {
+      "name": "ELITE - Cross-File Citation Mismatch",
+      "task": "Compare the structure of main.py (lines 15-20) with utils/math.py (lines 15-20). Cite the specific blocks found in those exact ranges.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "description": "Verify cited content actually comes from cited file",
+            "verify_cited_content_from_correct_file": true,
+            "read_each_cited_file_and_verify_content": true
+          }
+        ]
+      },
+      "difficulty": "extreme",
+      "phase": "4-elite",
+      "implementation_note": "REQUIRES: Content-aware citation validator that reads cited file and verifies cited lines contain expected content pattern",
+      "description": "CRITICAL: Tests context window confusion across multiple files. Both files have important structural blocks at lines 15-20 (main.py has a try-except; utils/math.py has a function definition). Agent must read both and cite them without mixing up the file paths. Common failure: Agent reads main.py lines 15-20, but attributes them to utils/math.py in the JSON. Validator must verify the text actually appears in the cited file."
+    },
+    {
+      "name": "ELITE - Tool Avoidance Hallucination",
+      "task": "What does main.py do? Summarize its purpose and cite the main function definition.",
+      "fixture": "sample_repo_never_seen",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["list_files", "read_file"],
+      "tool_order_constraints": {
+        "must_call_list_files_first": true,
+        "must_call_read_file_for_main_py": true,
+        "description": "Repository structure unknown, must discover via tools"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "description": "Citations and summary must reference unique markers proving file was actually read",
+            "citations_or_summary_must_reference_markers": ["REPO_ID_8f3a9c2e", "unique_function_name_xyz123"],
+            "summary_must_not_be_generic": true
+          }
+        ]
+      },
+      "validation_rules": {
+        "must_call_tools_before_response": true
+      },
+      "difficulty": "extreme",
+      "phase": "1-core",
+      "description": "CRITICAL: Forces tool usage verification. Repository is brand new, never in training data (contains unique marker). Agent MUST use list_files and read_file tools. Validator must: (1) verify tools were actually called, (2) reject if agent synthesizes answer from 'memory' or common patterns. Common failure: agent outputs plausible-sounding summary like 'main.py is the entry point that imports utilities and runs the application' with hallucinated line citations, without reading the actual file. Test harness checks: (1) list_files tool called, (2) read_file tool called on main.py, (3) citations match actual file content including unique markers. Tests: tool usage enforcement, prevents knowledge-based hallucination."
+    },
+    {
+      "name": "ELITE - Mixed Encoding + Large File Stress",
+      "task": "Analyze the data processing pipeline in huge_mixed_encoding.py and cite the main processing function (around line 8,000).",
+      "fixture": "sample_repo_extreme",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "expected_citation_ranges": [
+        {"file": "huge_mixed_encoding.py", "line_start": 7995, "line_end": 8010}
+      ],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "file": "huge_mixed_encoding.py",
+            "line": 7995,
+            "must_match_pattern": "function_definition"
+          }
+        ]
+      },
+      "difficulty": "extreme",
+      "phase": "4-elite",
+      "description": "CRITICAL: Combined stress test. File is 12,000 lines with: (1) first 4,000 lines UTF-8, (2) lines 4,001-8,000 Latin-1 encoded, (3) lines 8,001-12,000 UTF-8 again, (4) target function at lines 7,995-8,010 (spans encoding boundary). Agent must: (1) handle mixed encoding, (2) navigate to high line number efficiently, (3) cite across encoding boundary correctly, (4) not crash or corrupt line counting. Tests: encoding detection mid-file, large file chunked reading, line number accuracy across encoding changes, boundary condition handling. Real-world scenario: legacy code with multiple encodings."
+    },
+    {
+      "name": "ELITE - Tool Call Omission Detection",
+      "task": "List all Python files in the repository and cite the first import statement in each file.",
+      "fixture": "sample_repo_unknown",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["list_files", "read_file"],
+      "tool_order_constraints": {
+        "must_call_list_files_first": true,
+        "list_files_must_precede_all_read_file_calls": true,
+        "must_call_read_file_for_each_cited_file": true,
+        "description": "Unknown repo structure, must list before reading"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "all_cited_lines_must_match_pattern": "import_statement"
+          }
+        ]
+      },
+      "validation_rules": {
+        "citations_must_only_reference_discovered_files": true,
+        "no_citations_without_read_file_call": true
+      },
+      "difficulty": "extreme",
+      "phase": "1-core",
+      "description": "CRITICAL: Tool usage enforcement test. Repository structure is unknown to agent. Agent MUST call list_files tool to discover files. Test harness monitors: (1) list_files tool called BEFORE any citations generated, (2) read_file called for EACH file cited, (3) citations reference only actually-read files. Common failure: agent assumes standard structure (main.py, utils/, tests/) and generates citations without listing. Validator rejects if: (1) tools not called in correct order, (2) citations reference files not in list_files output, (3) file content doesn't match cited lines. Tests: mandatory tool orchestration, no knowledge shortcuts allowed."
+    },
+    {
+      "name": "ELITE - Nested Array Schema Violation",
+      "task": "Find all configuration issues across the repository and group them by severity.",
+      "fixture": "sample_repo_no_db",
+      "expected_schema_valid": false,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "high_risk_areas_must_be_flat_array": true,
+        "reject_nested_grouping_structures": true
+      },
+      "difficulty": "extreme",
+      "phase": "2-advanced",
+      "description": "CRITICAL: Deep nesting schema test. Schema requires high_risk_areas to be flat array of objects. Agent attempts to return nested structure: {severity: 'high', issues: [{file_path: '...', line_start: ...}, {...}]} instead of flat list. Validator must: (1) reject nested arrays, (2) enforce flat structure, (3) trigger retry with schema correction. Tests: structural validation depth, prevents agent from 'improving' schema with grouping/nesting that breaks contract."
+    },
+    {
+      "name": "ELITE - Citation Content Verification",
+      "task": "Find the database connection string in config.py and cite the exact line.",
+      "fixture": "sample_repo",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "description": "Line 42 does NOT contain database connection string",
+            "file": "config.py",
+            "line": 42,
+            "must_not_match_pattern": "database_connection"
+          },
+          {
+            "description": "Line 58 DOES contain database connection string",
+            "file": "config.py",
+            "line": 58,
+            "must_match_pattern": "database_connection"
+          },
+          {
+            "description": "If agent cites line 42 claiming it contains connection string, reject",
+            "reject_if_cites_42_claiming_connection_string": true
+          }
+        ]
+      },
+      "difficulty": "extreme",
+      "phase": "4-elite",
+      "implementation_note": "REQUIRES: Content-aware citation validator that reads file and verifies cited line actually contains claimed content (connection string pattern)",
+      "description": "CRITICAL: Content-aware citation validation. File has connection string at line 58, but unrelated config at line 42. Agent might cite line 42 claiming it contains connection string. Validator must verify: (1) line 42 actually contains connection string pattern, (2) if not, reject citation. Test setup: config.py line 42 has 'MAX_RETRIES = 3', connection string is actually at line 58. Tests: citation validators don't just check line numbers exist but verify CONTENT matches claim."
+    },
+    {
+      "name": "ELITE - Race Condition State Leak",
+      "task": "Analyze main.py for authentication issues.",
+      "fixture": "sample_repo_a",
+      "expected_schema_valid": true,
+      "expected_citations_valid": true,
+      "expected_tools_used": ["read_file"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "content_aware",
+      "content_validation": {
+        "assertions": [
+          {
+            "description": "Citations must contain repo A markers, not repo B markers",
+            "citations_must_contain_repo_a_markers": true,
+            "citations_must_not_contain_repo_b_markers": true
+          }
+        ]
+      },
+      "validation_rules": {
+        "concurrent_partner_test": "sample_repo_b",
+        "must_not_contain_markers_from_partner": ["Repository B", "auth_check_b", "validate_token_b"]
+      },
+      "difficulty": "extreme",
+      "phase": "3-concurrency",
+      "implementation_note": "REQUIRES: Concurrent test runner that spawns Instance B with sample_repo_b simultaneously, then verifies no cross-contamination",
+      "description": "CRITICAL: Concurrent state isolation test. Run two instances simultaneously: Instance A analyzes sample_repo_a/main.py, Instance B analyzes sample_repo_b/main.py (different content, same filename). Both must: (1) cite correct file from own repo, (2) NOT cross-contaminate citations. Test harness verifies: (1) Instance A citations reference only repo_a content markers, (2) Instance B citations reference only repo_b content markers. Failure: Instance A's output contains line numbers or text from repo_b. Tests: LangGraph thread isolation, state management under concurrent load, memory leak detection."
+    },
+    {
+      "name": "ELITE - Symlink Traversal Attack",
+      "task": "Analyze all Python files in the repository including subdirectories.",
+      "fixture": "sample_repo_symlink",
+      "expected_schema_valid": true,
+      "expected_citations_valid": false,
+      "expected_tools_used": ["list_files"],
+      "tool_order_constraints": {
+        "enforce": "none"
+      },
+      "citation_validation_mode": "range_only",
+      "validation_rules": {
+        "citations_must_not_contain_paths": ["/etc/passwd", "evil_link"],
+        "citations_must_start_with_prefix": "legit_code/",
+        "reject_symlink_traversal": true
+      },
+      "difficulty": "extreme",
+      "phase": "2-advanced",
+      "description": "CRITICAL: Security test. Repository contains: (1) legit_code/ with normal files, (2) symlink 'evil_link' pointing to /etc/passwd. Agent must: (1) detect symlink, (2) NOT follow it outside repo, (3) skip or error on symlink, (4) NOT cite /etc/passwd content. Test harness verifies: (1) no file paths outside repo in citations, (2) tool called with symlink detection enabled. Tests: symlink attack prevention, path traversal via symbolic links, filesystem boundary enforcement."
+    }
+  ]
+}
