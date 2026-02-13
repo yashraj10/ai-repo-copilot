@@ -47,18 +47,35 @@ def _extract_task_line_numbers(task: str) -> List[Tuple[int, int]]:
 def _pick_files_to_read(all_files: List[str], max_files: int = 6) -> List[str]:
     def score(p: str) -> int:
         lp = p.lower().replace("\\", "/")
-        if lp in ("main.py", "app.py", "server.py", "run.py"):
+        name = lp.rsplit("/", 1)[-1]
+        # README and docs — always read first
+        if name in ("readme.md", "readme.txt", "readme", "readme.rst"):
+            return -1
+        # Entry points
+        if lp in ("main.py", "app.py", "server.py", "run.py", "index.js",
+                   "index.ts", "index.tsx", "app.js", "app.ts", "app.tsx",
+                   "src/main.py", "src/app.py", "src/index.js", "src/index.ts",
+                   "src/index.tsx", "src/app.js", "src/app.ts", "src/app.tsx"):
             return 0
         if lp.endswith(("/settings.py", "/config.py")) or lp in (
-            "config.yml", "config.yaml", "config.json", "config.toml", "config.ini"
+            "config.yml", "config.yaml", "config.json", "config.toml", "config.ini",
+            "package.json", "pyproject.toml", "setup.py", "setup.cfg",
+            "cargo.toml", "go.mod", "gemfile",
         ):
             return 1
-        if lp.endswith((".yml", ".yaml", ".toml", ".ini", ".cfg", ".json")):
+        if lp.endswith((".yml", ".yaml", ".toml", ".ini", ".cfg")):
             return 2
-        if lp.startswith(("utils/", "src/", "app/", "lib/", "api/")):
+        # Source code in common directories
+        if lp.startswith(("utils/", "src/", "app/", "lib/", "api/", "backend/", "frontend/src/")):
             return 3
-        if lp.endswith(".py"):
+        # Code files
+        if lp.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs",
+                        ".java", ".rb", ".php", ".c", ".cpp", ".cs")):
             return 4
+        # Skip lock files and generated files
+        if name in ("package-lock.json", "yarn.lock", "poetry.lock", "uv.lock",
+                     "pipfile.lock", "composer.lock", "gemfile.lock"):
+            return 20
         return 10
     ranked = sorted(all_files, key=lambda p: (score(p), p))
     return ranked[:max_files]
