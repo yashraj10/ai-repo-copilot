@@ -31,6 +31,25 @@ python cli.py /path/to/any/project "Find security vulnerabilities"
 
 That's it!
 
+## What Can You Ask?
+
+You can ask **any question in plain English**. The format is always:
+```bash
+python cli.py /path/to/code "your question here"
+```
+
+Some ideas:
+- `"Find security vulnerabilities"`
+- `"What does this app do"`
+- `"Where are API calls made"`
+- `"How does the authentication work"`
+- `"Find error handling patterns"`
+- `"What dependencies does this project use"`
+- `"Explain the main function"`
+- `"Find bugs and potential issues"`
+
+The agent reads the actual code files and answers with exact file names and line numbers.
+
 ## Examples
 
 ```bash
