@@ -1,40 +1,57 @@
 # AI Repo Co-Pilot
 
-A tool-using AI agent that analyzes code repositories and produces citation-backed reports with strict JSON outputs. Every claim is grounded in actual file contents with exact line numbers — no hallucinations.
+An AI-powered tool that analyzes your code and tells you about security risks, bugs, and patterns — with exact file names and line numbers. No hallucinations — every claim is backed by actual code it read.
 
-## Quick Start
+## How to Use (5 minutes)
 
+### 1. Clone this repo
 ```bash
-# Install dependencies
+git clone https://github.com/yashraj10/ai-repo-copilot.git
+cd ai-repo-copilot
+```
+
+### 2. Set up Python
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-
-# Set your OpenAI API key
-export OPENAI_API_KEY="sk-..."
-
-# Analyze a repo
-python cli.py /path/to/your/repo "Find security vulnerabilities"
 ```
 
-## Usage
+### 3. Add your OpenAI API key
+You need an OpenAI API key. Get one at https://platform.openai.com/api-keys
+```bash
+export OPENAI_API_KEY="sk-paste-your-key-here"
+```
+
+### 4. Analyze any code
+```bash
+# Analyze a project on your computer
+python cli.py /path/to/any/project "Find security vulnerabilities"
+```
+
+That's it!
+
+## Examples
 
 ```bash
-# General analysis (default task)
-python cli.py ./my-project
+# Analyze a folder on your machine
+python cli.py ~/Desktop/my-app "Find error handling patterns"
 
-# Specific question
-python cli.py ./my-project "Where is the database connection configured?"
+# Analyze a GitHub repo (clone it first, then analyze)
+git clone https://github.com/someone/their-repo.git /tmp/their-repo
+python cli.py /tmp/their-repo "Where is authentication handled?"
 
-# JSON output (for piping/scripting)
-python cli.py ./my-project --json
+# Get just the report (no progress logs)
+python cli.py ~/my-app -q "Find bugs"
 
-# Save report to file
-python cli.py ./my-project -o report.json
+# Save the report as JSON
+python cli.py ~/my-app -o report.json
 
-# Quiet mode (suppress progress logs)
-python cli.py ./my-project -q "Find error handling patterns"
+# Get raw JSON output
+python cli.py ~/my-app --json
 ```
 
-## Example Output
+## What You'll See
 
 ```
 ============================================================
@@ -66,7 +83,18 @@ VALIDATION
   Completed in 2.3s (1 LLM call)
 ```
 
-## Architecture
+## For Developers
+
+If you want to modify the agent code or run the test suite:
+
+```bash
+python -m eval.evaluator --phase 1-core      # 25 core tests
+python -m eval.evaluator --phase 2-advanced   # 8 advanced tests
+```
+
+Current score: **33/33**
+
+### Architecture
 
 ```
 [START] → plan → execute → analyze → route
@@ -77,51 +105,38 @@ VALIDATION
 
 Built with **LangGraph** for stateful graph execution with conditional routing and retry loops.
 
-### Components
-- **Planner** — classifies task type, extracts file references
-- **Executor** — calls `list_files` and `read_file` tools with retry + chunk fallback
-- **Analyzer** — routes based on evidence (empty repo, binary, security, normal)
-- **Summarizer** — LLM call (GPT-4o-mini) with schema-clamped output
-- **Verifier** — strict schema validation + evidence-grounded citation checking
+### How It Works
+1. **Planner** — figures out what the task is asking
+2. **Executor** — reads the actual files from your repo
+3. **Analyzer** — decides what to do with the evidence
+4. **Summarizer** — uses GPT-4o-mini to generate a structured report
+5. **Verifier** — checks that every citation points to real code
 
 ### Key Properties
-- **No hallucinations** — can only cite files it actually read, lines that actually exist
-- **Strict schema** — no extra fields, no type coercion, no nested structures
-- **Fail-loud** — symlinks, path traversal, tool errors all propagate to validation
-- **Retry loop** — if validation fails, re-prompts LLM with error feedback
+- **No hallucinations** — only cites files it actually read, lines that actually exist
+- **Strict schema** — validated JSON output every time
+- **Retry loop** — if validation fails, automatically re-prompts the AI
+- **Security aware** — blocks path traversal attacks and symlink exploits
 
-## Test Suite
-
-33 adversarial tests across two phases:
-
-```bash
-python -m eval.evaluator --phase 1-core      # 25 core tests
-python -m eval.evaluator --phase 2-advanced   # 8 advanced tests
-```
-
-Tests include: schema enforcement, citation grounding, hallucination traps, path traversal attacks, symlink detection, encoding edge cases, retry logic, binary file rejection, and more.
-
-**Current score: 33/33**
-
-## Project Structure
+### Project Structure
 
 ```
-├── cli.py                   # CLI entry point
+├── cli.py                   # CLI entry point (start here)
 ├── agent/
 │   ├── langgraph_workflow.py  # LangGraph state graph
-│   ├── state.py               # AgentState dataclass
+│   ├── state.py               # Agent state
 │   ├── planner.py             # Task classification
 │   ├── executor.py            # Tool orchestration
 │   ├── analyzer.py            # Evidence routing
 │   ├── summarizer.py          # LLM output generation
 │   └── verifier.py            # Schema + citation validation
 ├── tools/
-│   ├── list_files.py          # Filesystem walk tool
+│   ├── list_files.py          # Filesystem walk
 │   └── read_file.py           # Line-numbered file reader
 ├── eval/
-│   ├── evaluator.py           # Test harness with mutations
-│   ├── schema_validate.py     # Strict JSON schema checker
-│   ├── citation_validate.py   # Evidence-grounded citation checker
+│   ├── evaluator.py           # Test harness
+│   ├── schema_validate.py     # JSON schema checker
+│   ├── citation_validate.py   # Citation checker
 │   └── test_cases.json        # 33 test definitions
 └── requirements.txt
 ```
