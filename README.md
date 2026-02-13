@@ -25,8 +25,7 @@ export OPENAI_API_KEY="sk-paste-your-key-here"
 
 ### 4. Analyze any code
 ```bash
-# Analyze a project on your computer
-python cli.py /path/to/any/project "Find security vulnerabilities"
+python cli.py /path/to/any/project "your question here"
 ```
 
 That's it!
@@ -34,6 +33,7 @@ That's it!
 ## What Can You Ask?
 
 You can ask **any question in plain English**. The format is always:
+
 ```bash
 python cli.py /path/to/code "your question here"
 ```
@@ -50,24 +50,34 @@ Some ideas:
 
 The agent reads the actual code files and answers with exact file names and line numbers.
 
-## Examples
+## Analyze a Local Project
 
 ```bash
-# Analyze a folder on your machine
-python cli.py ~/Desktop/my-app "Find error handling patterns"
+python cli.py ~/Desktop/my-app "Find security vulnerabilities"
+```
 
-# Analyze a GitHub repo (clone it first, then analyze)
+## Analyze a GitHub Repo
+
+To analyze any public GitHub repo, clone it first, then analyze:
+
+```bash
 git clone https://github.com/someone/their-repo.git /tmp/their-repo
-python cli.py /tmp/their-repo "Where is authentication handled?"
+python cli.py /tmp/their-repo "Find security vulnerabilities"
+```
 
-# Get just the report (no progress logs)
-python cli.py ~/my-app -q "Find bugs"
+Two steps: clone, then analyze. Works with any public repo.
+
+## Options
+
+```bash
+# Quiet mode — just the report, no progress logs
+python cli.py /path/to/code -q "your question"
 
 # Save the report as JSON
-python cli.py ~/my-app -o report.json
+python cli.py /path/to/code -o report.json
 
-# Get raw JSON output
-python cli.py ~/my-app --json
+# Get raw JSON output (for piping to other tools)
+python cli.py /path/to/code --json
 ```
 
 ## What You'll See
@@ -101,6 +111,14 @@ VALIDATION
 ============================================================
   Completed in 2.3s (1 LLM call)
 ```
+
+## Supported File Types
+
+The tool can read code in **40+ languages** including:
+
+Python, JavaScript, TypeScript, JSX/TSX, HTML, CSS, Java, Go, Rust, C/C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Shell scripts, SQL, Dart, and many more.
+
+It also reads config files like JSON, YAML, TOML, XML, .env, and Dockerfile.
 
 ## For Developers
 
