@@ -117,9 +117,9 @@ def main():
         help="Save JSON output to a file",
     )
     parser.add_argument(
-        "-q", "--quiet",
+        "-v", "--verbose",
         action="store_true",
-        help="Suppress agent progress logs (only show report)",
+        help="Show detailed agent progress logs",
     )
 
     args = parser.parse_args()
@@ -130,8 +130,8 @@ def main():
         print(f"Error: '{args.repo}' is not a directory.", file=sys.stderr)
         sys.exit(1)
 
-    # Suppress logs if quiet mode
-    if args.quiet:
+    # Suppress logs unless verbose mode
+    if not args.verbose:
         sys.stdout = open(os.devnull, "w")
 
     # Run the agent
@@ -140,7 +140,7 @@ def main():
     try:
         state = run_langgraph_agent(task=args.task, repo_path=repo_path)
     except Exception as e:
-        if args.quiet:
+        if not args.verbose:
             sys.stdout = sys.__stdout__
         print(f"Error: Agent failed — {e}", file=sys.stderr)
         sys.exit(1)
@@ -148,7 +148,7 @@ def main():
     elapsed = time.time() - start
 
     # Restore stdout if suppressed
-    if args.quiet:
+    if not args.verbose:
         sys.stdout = sys.__stdout__
 
     # Build JSON result
