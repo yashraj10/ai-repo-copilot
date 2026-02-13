@@ -28,6 +28,12 @@ def format_report(state) -> str:
     lines.append("=" * 60)
     lines.append("")
 
+    # Question
+    task = getattr(state, "task", None)
+    if task:
+        lines.append(f"QUESTION: {task}")
+        lines.append("")
+
     # Summary
     summary = output.get("summary", "No summary available.")
     lines.append("SUMMARY")
